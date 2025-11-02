@@ -2844,35 +2844,37 @@
       const AIService = {
         async callProvider(prompt, userText, format = 'text') {
           const provider = State.settings.provider;
-        
-          // Debug logging
-          console.log('AIService.callProvider called:', {
-            provider: provider,
-            hasKey: !!State.settings.apiKey,
-            keyLength: State.settings.apiKey.length,
-            promptLength: prompt.length,
-            textLength: userText.length,
-            format: format
-          });
-        
+
           if (!provider || provider === 'local') {
             return this.localProcessing(userText, format);
           }
-        
+
           const config = Providers[provider];
           if (!config) {
             throw new Error('Invalid provider selected');
           }
-        
+
           if (config.requiresKey && !State.settings.apiKey) {
-            throw new Error(`API key required for ${config.name}. Please configure in AI Settings and check "Save key locally".`);
+            throw new Error(`API key required for ${config.name}. Please configure in AI Settings.`);
           }
-        
+
           const model = State.settings.model || config.defaultModel;
           const endpoint = State.settings.customUrl || config.endpoint;
-        
+
           UI.setStatus('Calling AI...', 'processing');
           UI.setProgress(10);
+
+          try {
+            if (provider === 'deepseek') {
+              return await this.callDeepSeek(endpoint, model, prompt, userText, format);
+            } else if (provider === 'huggingface') {
+              return await this.callHuggingFace(endpoint, model, prompt, userText, format);
+            } else {
+              return await this.callOpenAICompatible(endpoint, model, prompt, userText, format);
+            }
+          } catch (error) {
+            UI.setProgress(0);
+            throw error;
           }
         },
 
@@ -4433,7 +4435,7 @@
       };
 
       // ========================================
-      // Settings Manager - Enhanced with Debug Logging
+      // Settings Manager - Enhanced
       // ========================================
       const Settings = {
         load() {
@@ -4447,18 +4449,10 @@
             saveKey: saved.saveKey || false,
             autoProcess: saved.autoProcess !== undefined ? saved.autoProcess : true
           };
-      
-          // Debug: Log loaded settings
-          console.log('Loaded settings:', {
-            provider: State.settings.provider,
-            hasKey: !!State.settings.apiKey,
-            keyLength: State.settings.apiKey.length,
-            saveKey: State.settings.saveKey
-          });
-      
+
           this.updateUI();
         },
-      
+
         save() {
           const settings = {
             provider: $id('providerSelect').value,
@@ -4467,38 +4461,19 @@
             customUrl: $id('customUrl')?.value.trim() || '',
             customHeader: $id('customHeader')?.value.trim() || 'Authorization',
             saveKey: $id('saveKeyCheck').checked,
-            autoProcess: true
+            autoProcess: true // Always auto-process files
           };
-      
+
           State.settings = settings;
-          
-          // Debug logging
-          console.log('Saving settings:', {
-            provider: settings.provider,
-            hasKey: !!settings.apiKey,
-            saveKey: settings.saveKey,
-            keyLength: settings.apiKey.length
-          });
-          
           if (Storage.save('ai_formatter_settings', settings)) {
-            // Verify save
-            const verified = Storage.load('ai_formatter_settings');
-            console.log('Verified saved settings:', {
-              provider: verified.provider,
-              hasKey: !!verified.apiKey,
-              keyLength: verified.apiKey ? verified.apiKey.length : 0
-            });
-            
             UI.showToast('Settings saved successfully', 'success');
             $id('settingsModal').classList.remove('active');
-          } else {
-            UI.showToast('Failed to save settings. Check browser storage permissions.', 'error');
           }
         },
-      
+
         clear() {
           if (!confirm('Clear all saved settings and API keys?')) return;
-      
+
           Storage.remove('ai_formatter_settings');
           State.settings = {
             provider: '',
@@ -4509,11 +4484,11 @@
             saveKey: false,
             autoProcess: true
           };
-      
+
           this.updateUI();
           UI.showToast('Settings cleared', 'info');
         },
-      
+
         updateUI() {
           $id('providerSelect').value = State.settings.provider || '';
           $id('apiKeyInput').value = State.settings.apiKey || '';
@@ -4521,15 +4496,15 @@
           if ($id('customUrl')) $id('customUrl').value = State.settings.customUrl || '';
           if ($id('customHeader')) $id('customHeader').value = State.settings.customHeader || 'Authorization';
           $id('saveKeyCheck').checked = State.settings.saveKey || false;
-      
+
           this.updateProviderUI();
         },
-      
+
         updateProviderUI() {
           const provider = $id('providerSelect').value;
           const apiKeySection = $id('apiKeySection');
           const customSection = $id('customEndpointSection');
-      
+
           if (provider === 'local' || !provider) {
             apiKeySection.style.display = 'none';
             if (customSection) customSection.style.display = 'none';
@@ -4749,38 +4724,20 @@
           $id('testKeyBtn').addEventListener('click', async () => {
             const btn = $id('testKeyBtn');
             UI.showLoading(btn, true, 'Testing...');
-          
+
             try {
               State.settings.provider = $id('providerSelect').value;
               State.settings.apiKey = $id('apiKeyInput').value.trim();
               State.settings.model = $id('modelInput').value.trim();
-          
-              // Debug: Log test settings
-              console.log('Testing with settings:', {
-                provider: State.settings.provider,
-                hasKey: !!State.settings.apiKey,
-                keyLength: State.settings.apiKey.length,
-                model: State.settings.model || 'default'
-              });
-          
-              if (!State.settings.provider || State.settings.provider === 'local') {
-                throw new Error('Please select an AI provider first');
-              }
-          
-              if (!State.settings.apiKey) {
-                throw new Error('Please enter an API key first');
-              }
-          
+
               await AIService.testConnection();
               UI.showToast('API key works! Connection successful.', 'success');
-              console.log('✅ API test successful');
             } catch (error) {
-              console.error('❌ Test error:', error);
               UI.showToast(`API test failed: ${error.message}`, 'error');
             } finally {
               UI.showLoading(btn, false);
             }
-          });  
+          });
 
           $id('saveSettingsBtn').addEventListener('click', () => Settings.save());
           $id('clearSettingsBtn').addEventListener('click', () => Settings.clear());
@@ -4874,60 +4831,40 @@
             UI.showToast('Already processing, please wait...', 'warning');
             return;
           }
-        
+
           const inputText = $id('textInput').value.trim();
           const prompt = $id('customPrompt').value.trim();
-        
+
           if (!inputText) {
             UI.showToast('Please enter text or upload a document', 'warning');
             return;
           }
-        
+
           if (!prompt) {
             UI.showToast('Please select or enter a formatting prompt', 'warning');
             return;
           }
-        
-          // Debug: Check current settings
-          console.log('Processing with settings:', {
-            provider: State.settings.provider,
-            hasKey: !!State.settings.apiKey,
-            keyLength: State.settings.apiKey.length
-          });
-        
-          // Check settings before processing
-          if (!State.settings.provider || State.settings.provider === 'local') {
-            UI.showToast('Please configure an AI provider in Settings', 'error');
-            $id('settingsModal').classList.add('active');
-            return;
-          }
-        
-          if (!State.settings.apiKey) {
-            UI.showToast('Please enter your API key in Settings and check "Save key locally"', 'error');
-            $id('settingsModal').classList.add('active');
-            return;
-          }
-        
+
           State.processing = true;
           const btn = $id('processBtn');
           UI.showLoading(btn);
           UI.setStatus('Processing...', 'processing');
           UI.setProgress(5);
-        
+
           try {
             const result = await AIService.callProvider(prompt, inputText, State.outputFormat);
-        
+
             $id('outputText').value = result;
-        
+
             UI.setProgress(100);
             UI.setStatus('Complete', 'ready');
             UI.showToast('Processing completed successfully', 'success');
-        
+
             // Show confetti for successful processing
             if (result.length > 10) {
               UI.showConfetti();
             }
-        
+
             setTimeout(() => {
               UI.setProgress(0);
               UI.setStatus('Ready', 'ready');
@@ -4942,6 +4879,7 @@
             State.processing = false;
           }
         }
+      };
 
       // Chat Manager
         const ChatManager = {
