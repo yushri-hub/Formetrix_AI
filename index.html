@@ -2844,64 +2844,24 @@
       const AIService = {
         async callProvider(prompt, userText, format = 'text') {
           const provider = State.settings.provider;
-
+      
+          // Auto-fallback to local processing for deployment safety
           if (!provider || provider === 'local') {
             return this.localProcessing(userText, format);
           }
-
+      
           const config = Providers[provider];
           if (!config) {
-            throw new Error('Invalid provider selected');
+            console.warn(`Invalid provider "${provider}", falling back to local processing`);
+            return this.localProcessing(userText, format);
           }
-
+      
           if (config.requiresKey && !State.settings.apiKey) {
-            throw new Error(`API key required for ${config.name}. Please configure in AI Settings.`);
+            // Instead of throwing error, fall back to local processing
+            console.warn(`No API key for ${config.name}, using local processing`);
+            UI.showToast(`No API key configured. Using local processing instead.`, 'warning');
+            return this.localProcessing(userText, format);
           }
-
-          const model = State.settings.model || config.defaultModel;
-          const endpoint = State.settings.customUrl || config.endpoint;
-
-          UI.setStatus('Calling AI...', 'processing');
-          UI.setProgress(10);
-
-          try {
-            if (provider === 'deepseek') {
-              return await this.callDeepSeek(endpoint, model, prompt, userText, format);
-            } else if (provider === 'huggingface') {
-              return await this.callHuggingFace(endpoint, model, prompt, userText, format);
-            } else {
-              return await this.callOpenAICompatible(endpoint, model, prompt, userText, format);
-            }
-          } catch (error) {
-            UI.setProgress(0);
-            throw error;
-          }
-        },
-
-        async callOpenAICompatible(endpoint, model, prompt, userText, format) {
-          const headers = {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${State.settings.apiKey}`
-          };
-
-          // Enhance prompt based on output format
-          const enhancedPrompt = this.enhancePromptForFormat(prompt, format);
-
-          const body = {
-            model: model,
-            messages: [
-              {
-                role: 'system',
-                content: 'You are a text formatting assistant. Apply instructions exactly. Output only formatted text with no explanation.'
-              },
-              {
-                role: 'user',
-                content: `${enhancedPrompt}\n\nText to process:\n${userText}`
-              }
-            ],
-            temperature: 0.3,
-            max_tokens: 4096
-          };
 
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -4440,18 +4400,113 @@
       const Settings = {
         load() {
           const saved = Storage.load('ai_formatter_settings', {});
-          State.settings = {
-            provider: saved.provider || '',
-            apiKey: saved.saveKey ? (saved.apiKey || '') : '',
-            model: saved.model || '',
-            customUrl: saved.customUrl || '',
-            customHeader: saved.customHeader || 'Authorization',
-            saveKey: saved.saveKey || false,
-            autoProcess: saved.autoProcess !== undefined ? saved.autoProcess : true
-          };
-
+          
+          // Auto-configure for deployment if no settings exist
+          if (Object.keys(saved).length === 0) {
+            console.log('No saved settings found, configuring for deployment...');
+            const defaultSettings = {
+              provider: 'local',
+              apiKey: '',
+              model: '',
+              customUrl: '',
+              customHeader: 'Authorization',
+              saveKey: false,
+              autoProcess: true
+            };
+            
+            // Save the default settings
+            Storage.save('ai_formatter_settings', defaultSettings);
+            State.settings = defaultSettings;
+            
+            // Show helpful message to user
+            setTimeout(() => {
+              UI.showToast('Welcome! Using local processing mode. Configure AI providers in Settings for enhanced features.', 'info', 6000);
+            }, 1000);
+          } else {
+            // Use existing saved settings
+            State.settings = {
+              provider: saved.provider || '',
+              apiKey: saved.saveKey ? (saved.apiKey || '') : '',
+              model: saved.model || '',
+              customUrl: saved.customUrl || '',
+              customHeader: saved.customHeader || 'Authorization',
+              saveKey: saved.saveKey || false,
+              autoProcess: saved.autoProcess !== undefined ? saved.autoProcess : true
+            };
+          }
+      
           this.updateUI();
         },
+      
+        save() {
+          const settings = {
+            provider: $id('providerSelect').value,
+            apiKey: State.settings.saveKey ? $id('apiKeyInput').value.trim() : '',
+            model: $id('modelInput').value.trim(),
+            customUrl: $id('customUrl')?.value.trim() || '',
+            customHeader: $id('customHeader')?.value.trim() || 'Authorization',
+            saveKey: $id('saveKeyCheck').checked,
+            autoProcess: true
+          };
+      
+          State.settings = settings;
+          if (Storage.save('ai_formatter_settings', settings)) {
+            UI.showToast('Settings saved successfully', 'success');
+            $id('settingsModal').classList.remove('active');
+          }
+        },
+      
+        clear() {
+          if (!confirm('Clear all saved settings and API keys?')) return;
+      
+          Storage.remove('ai_formatter_settings');
+          
+          // Reset to deployment defaults
+          const defaultSettings = {
+            provider: 'local',
+            apiKey: '',
+            model: '',
+            customUrl: '',
+            customHeader: 'Authorization',
+            saveKey: false,
+            autoProcess: true
+          };
+          
+          State.settings = defaultSettings;
+          Storage.save('ai_formatter_settings', defaultSettings);
+      
+          this.updateUI();
+          UI.showToast('Settings reset to defaults', 'info');
+        },
+      
+        updateUI() {
+          $id('providerSelect').value = State.settings.provider || '';
+          $id('apiKeyInput').value = State.settings.apiKey || '';
+          $id('modelInput').value = State.settings.model || '';
+          if ($id('customUrl')) $id('customUrl').value = State.settings.customUrl || '';
+          if ($id('customHeader')) $id('customHeader').value = State.settings.customHeader || 'Authorization';
+          $id('saveKeyCheck').checked = State.settings.saveKey || false;
+      
+          this.updateProviderUI();
+        },
+      
+        updateProviderUI() {
+          const provider = $id('providerSelect').value;
+          const apiKeySection = $id('apiKeySection');
+          const customSection = $id('customEndpointSection');
+      
+          if (provider === 'local' || !provider) {
+            apiKeySection.style.display = 'none';
+            if (customSection) customSection.style.display = 'none';
+          } else if (provider === 'custom') {
+            apiKeySection.style.display = 'block';
+            if (customSection) customSection.style.display = 'block';
+          } else {
+            apiKeySection.style.display = 'block';
+            if (customSection) customSection.style.display = 'none';
+          }
+        }
+      };
 
         save() {
           const settings = {
