@@ -4461,52 +4461,13 @@
             customUrl: $id('customUrl')?.value.trim() || '',
             customHeader: $id('customHeader')?.value.trim() || 'Authorization',
             saveKey: $id('saveKeyCheck').checked,
-            autoProcess: true
+            autoProcess: true // Always auto-process files
           };
-      
-          State.settings = settings;
-          
-          // Debug logging
-          console.log('Saving settings:', {
-            provider: settings.provider,
-            hasKey: !!settings.apiKey,
-            saveKey: settings.saveKey,
-            keyLength: settings.apiKey.length
-          });
-          
-          if (Storage.save('ai_formatter_settings', settings)) {
-            // Verify save
-            const verified = Storage.load('ai_formatter_settings');
-            console.log('Verified saved settings:', {
-              provider: verified.provider,
-              hasKey: !!verified.apiKey
-            });
-            
-            UI.showToast('Settings saved successfully', 'success');
-            $id('settingsModal').classList.remove('active');
-          } else {
-            UI.showToast('Failed to save settings. Check browser storage permissions.', 'error');
-          }
-        },
 
           State.settings = settings;
-          console.log('Saving settings:', {
-            provider: settings.provider,
-            hasKey: !!settings.apiKey,
-            saveKey: settings.saveKey,
-            keyLength: settings.apiKey.length
-          });
           if (Storage.save('ai_formatter_settings', settings)) {
-            const verified = Storage.load('ai_formatter_settings');
-            console.log('Verified saved settings:', {
-              provider: verified.provider,
-              hasKey: !!verified.apiKey
-            });
             UI.showToast('Settings saved successfully', 'success');
             $id('settingsModal').classList.remove('active');
-            } else {
-            // 👇 ADD THIS LINE
-            UI.showToast('Failed to save settings. Check browser storage permissions.', 'error');
           }
         },
 
